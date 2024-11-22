@@ -16,6 +16,8 @@ package service
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"time"
 
 	"github.com/twitchtv/twirp"
@@ -85,6 +87,9 @@ func (s *SIPService) CreateSIPTrunk(ctx context.Context, req *livekit.CreateSIPT
 		Name:             req.Name,
 		Metadata:         req.Metadata,
 	}
+	if err := info.Validate(); err != nil {
+		return nil, err
+	}
 
 	// Validate all trunks including the new one first.
 	list, err := s.store.ListSIPInboundTrunk(ctx)
@@ -119,7 +124,7 @@ func (s *SIPService) CreateSIPInboundTrunk(ctx context.Context, req *livekit.Cre
 	if info.SipTrunkId != "" {
 		return nil, twirp.NewError(twirp.InvalidArgument, "trunk ID must be empty")
 	}
-	AppendLogFields(ctx, "trunk", logger.Proto(req.Trunk))
+	AppendLogFields(ctx, "trunk", logger.Proto(info))
 
 	// Keep ID empty still, so that validation can print "<new>" instead of a non-existent ID in the error.
 
@@ -156,10 +161,91 @@ func (s *SIPService) CreateSIPOutboundTrunk(ctx context.Context, req *livekit.Cr
 	if info.SipTrunkId != "" {
 		return nil, twirp.NewError(twirp.InvalidArgument, "trunk ID must be empty")
 	}
-	AppendLogFields(ctx, "trunk", logger.Proto(req.Trunk))
+	AppendLogFields(ctx, "trunk", logger.Proto(info))
 
 	// No additional validation needed for outbound.
 	info.SipTrunkId = guid.New(utils.SIPTrunkPrefix)
+	if err := s.store.StoreSIPOutboundTrunk(ctx, info); err != nil {
+		return nil, err
+	}
+	return info, nil
+}
+
+func (s *SIPService) UpdateSIPInboundTrunk(ctx context.Context, req *livekit.UpdateSIPInboundTrunkRequest) (*livekit.SIPInboundTrunkInfo, error) {
+	if err := EnsureSIPAdminPermission(ctx); err != nil {
+		return nil, twirpAuthError(err)
+	}
+	if s.store == nil {
+		return nil, ErrSIPNotConnected
+	}
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+
+	AppendLogFields(ctx,
+		"request", logger.Proto(req),
+		"trunkID", req.SipTrunkId,
+	)
+
+	// Validate all trunks including the new one first.
+	list, err := s.store.ListSIPInboundTrunk(ctx)
+	if err != nil {
+		return nil, err
+	}
+	i := slices.IndexFunc(list, func(info2 *livekit.SIPInboundTrunkInfo) bool {
+		return req.SipTrunkId == info2.SipTrunkId
+	})
+	if i < 0 {
+		return nil, ErrSIPTrunkNotFound
+	}
+	info := list[i]
+	switch a := req.Action.(type) {
+	default:
+		return nil, errors.New("missing or unsupported action")
+	case livekit.UpdateSIPInboundTrunkRequestAction:
+		if err = a.Apply(info); err != nil {
+			return nil, err
+		}
+	}
+	list[i] = info
+	if err = sip.ValidateTrunks(list); err != nil {
+		return nil, err
+	}
+	if err := s.store.StoreSIPInboundTrunk(ctx, info); err != nil {
+		return nil, err
+	}
+	return info, nil
+}
+
+func (s *SIPService) UpdateSIPOutboundTrunk(ctx context.Context, req *livekit.UpdateSIPOutboundTrunkRequest) (*livekit.SIPOutboundTrunkInfo, error) {
+	if err := EnsureSIPAdminPermission(ctx); err != nil {
+		return nil, twirpAuthError(err)
+	}
+	if s.store == nil {
+		return nil, ErrSIPNotConnected
+	}
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+
+	AppendLogFields(ctx,
+		"request", logger.Proto(req),
+		"trunkID", req.SipTrunkId,
+	)
+
+	info, err := s.store.LoadSIPOutboundTrunk(ctx, req.SipTrunkId)
+	if err != nil {
+		return nil, err
+	}
+	switch a := req.Action.(type) {
+	default:
+		return nil, errors.New("missing or unsupported action")
+	case livekit.UpdateSIPOutboundTrunkRequestAction:
+		if err = a.Apply(info); err != nil {
+			return nil, err
+		}
+	}
+	// No additional validation needed for outbound.
 	if err := s.store.StoreSIPOutboundTrunk(ctx, info); err != nil {
 		return nil, err
 	}
@@ -290,15 +376,7 @@ func (s *SIPService) CreateSIPDispatchRule(ctx context.Context, req *livekit.Cre
 		"trunkID", req.TrunkIds,
 	)
 	// Keep ID empty, so that validation can print "<new>" instead of a non-existent ID in the error.
-	info := &livekit.SIPDispatchRuleInfo{
-		Rule:            req.Rule,
-		TrunkIds:        req.TrunkIds,
-		InboundNumbers:  req.InboundNumbers,
-		HidePhoneNumber: req.HidePhoneNumber,
-		Name:            req.Name,
-		Metadata:        req.Metadata,
-		Attributes:      req.Attributes,
-	}
+	info := req.DispatchRuleInfo()
 
 	// Validate all rules including the new one first.
 	list, err := s.store.ListSIPDispatchRule(ctx)
@@ -312,6 +390,52 @@ func (s *SIPService) CreateSIPDispatchRule(ctx context.Context, req *livekit.Cre
 
 	// Now we can generate ID and store.
 	info.SipDispatchRuleId = guid.New(utils.SIPDispatchRulePrefix)
+	if err := s.store.StoreSIPDispatchRule(ctx, info); err != nil {
+		return nil, err
+	}
+	return info, nil
+}
+
+func (s *SIPService) UpdateSIPDispatchRule(ctx context.Context, req *livekit.UpdateSIPDispatchRuleRequest) (*livekit.SIPDispatchRuleInfo, error) {
+	if err := EnsureSIPAdminPermission(ctx); err != nil {
+		return nil, twirpAuthError(err)
+	}
+	if s.store == nil {
+		return nil, ErrSIPNotConnected
+	}
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
+
+	AppendLogFields(ctx,
+		"request", logger.Proto(req),
+		"ruleID", req.SipDispatchRuleId,
+	)
+
+	// Validate all rules including the new one first.
+	list, err := s.store.ListSIPDispatchRule(ctx)
+	if err != nil {
+		return nil, err
+	}
+	i := slices.IndexFunc(list, func(info2 *livekit.SIPDispatchRuleInfo) bool {
+		return req.SipDispatchRuleId == info2.SipDispatchRuleId
+	})
+	if i < 0 {
+		return nil, ErrSIPDispatchRuleNotFound
+	}
+	info := list[i]
+	switch a := req.Action.(type) {
+	default:
+		return nil, errors.New("missing or unsupported action")
+	case livekit.UpdateSIPDispatchRuleRequestAction:
+		if err = a.Apply(info); err != nil {
+			return nil, err
+		}
+	}
+	list[i] = info
+	if err = sip.ValidateDispatchRules(list); err != nil {
+		return nil, err
+	}
 	if err := s.store.StoreSIPDispatchRule(ctx, info); err != nil {
 		return nil, err
 	}
@@ -409,6 +533,9 @@ func (s *SIPService) CreateSIPParticipantRequest(ctx context.Context, req *livek
 	if s.store == nil {
 		return nil, ErrSIPNotConnected
 	}
+	if err := req.Validate(); err != nil {
+		return nil, err
+	}
 	callID := sip.NewCallID()
 	log := logger.GetLogger().WithUnlikelyValues(
 		"callID", callID,
@@ -473,6 +600,9 @@ func (s *SIPService) transferSIPParticipantRequest(ctx context.Context, req *liv
 	}
 	if err := EnsureAdminPermission(ctx, livekit.RoomName(req.RoomName)); err != nil {
 		return nil, twirpAuthError(err)
+	}
+	if err := req.Validate(); err != nil {
+		return nil, err
 	}
 
 	resp, err := s.roomService.GetParticipant(ctx, &livekit.RoomParticipantIdentity{
