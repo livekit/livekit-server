@@ -30,23 +30,38 @@ import (
 // matchSIPTrunk finds a SIP Trunk definition matching the request.
 // Returns nil if no rules matched or an error if there are conflicting definitions.
 func (s *IOInfoService) matchSIPTrunk(ctx context.Context, trunkID, calling, called string, srcIP netip.Addr) (*livekit.SIPInboundTrunkInfo, error) {
-	trunks, err := s.ss.ListSIPInboundTrunk(ctx)
+	var trunkIDs []string
+	if trunkID != "" {
+		trunkIDs = []string{trunkID}
+	}
+	it, err := ListSIPInboundTrunk(ctx, s.ss, &livekit.ListSIPInboundTrunkRequest{
+		TrunkIds: trunkIDs,
+		Numbers:  []string{called},
+	})
 	if err != nil {
 		return nil, err
 	}
-	return sip.MatchTrunk(trunks, srcIP, calling, called)
+	defer it.Close()
+	return sip.MatchTrunkIter(it, srcIP, calling, called)
 }
 
 // matchSIPDispatchRule finds the best dispatch rule matching the request parameters. Returns an error if no rule matched.
 // Trunk parameter can be nil, in which case only wildcard dispatch rules will be effective (ones without Trunk IDs).
 func (s *IOInfoService) matchSIPDispatchRule(ctx context.Context, trunk *livekit.SIPInboundTrunkInfo, req *rpc.EvaluateSIPDispatchRulesRequest) (*livekit.SIPDispatchRuleInfo, error) {
+	var trunkIDs []string
+	if trunk != nil {
+		trunkIDs = []string{trunk.SipTrunkId}
+	}
 	// Trunk can still be nil here in case none matched or were defined.
 	// This is still fine, but only in case we'll match exactly one wildcard dispatch rule.
-	rules, err := s.ss.ListSIPDispatchRule(ctx)
+	it, err := ListSIPDispatchRule(ctx, s.ss, &livekit.ListSIPDispatchRuleRequest{
+		TrunkIds: trunkIDs,
+	})
 	if err != nil {
 		return nil, err
 	}
-	return sip.MatchDispatchRule(trunk, rules, req)
+	defer it.Close()
+	return sip.MatchDispatchRuleIter(trunk, it, req)
 }
 
 func (s *IOInfoService) EvaluateSIPDispatchRules(ctx context.Context, req *rpc.EvaluateSIPDispatchRulesRequest) (*rpc.EvaluateSIPDispatchRulesResponse, error) {

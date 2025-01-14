@@ -31,14 +31,14 @@ import (
 
 func TestSIPStoreDispatch(t *testing.T) {
 	ctx := context.Background()
-	rs := redisStore(t)
+	rs := redisStoreDocker(t)
 
 	id := guid.New(utils.SIPDispatchRulePrefix)
 
 	// No dispatch rules initially.
-	list, err := rs.ListSIPDispatchRule(ctx)
+	list, err := rs.ListSIPDispatchRule(ctx, &livekit.ListSIPDispatchRuleRequest{})
 	require.NoError(t, err)
-	require.Empty(t, list)
+	require.Empty(t, list.Items)
 
 	// Loading non-existent dispatch should return proper not found error.
 	got, err := rs.LoadSIPDispatchRule(ctx, id)
@@ -69,10 +69,10 @@ func TestSIPStoreDispatch(t *testing.T) {
 	require.True(t, proto.Equal(rule, got))
 
 	// Listing
-	list, err = rs.ListSIPDispatchRule(ctx)
+	list, err = rs.ListSIPDispatchRule(ctx, &livekit.ListSIPDispatchRuleRequest{})
 	require.NoError(t, err)
-	require.Len(t, list, 1)
-	require.True(t, proto.Equal(rule, list[0]))
+	require.Len(t, list.Items, 1)
+	require.True(t, proto.Equal(rule, list.Items[0]))
 
 	// Deletion. Should not return error if not exists.
 	err = rs.DeleteSIPDispatchRule(ctx, &livekit.SIPDispatchRuleInfo{SipDispatchRuleId: id})
@@ -81,9 +81,9 @@ func TestSIPStoreDispatch(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check that it's deleted.
-	list, err = rs.ListSIPDispatchRule(ctx)
+	list, err = rs.ListSIPDispatchRule(ctx, &livekit.ListSIPDispatchRuleRequest{})
 	require.NoError(t, err)
-	require.Empty(t, list)
+	require.Empty(t, list.Items)
 
 	got, err = rs.LoadSIPDispatchRule(ctx, id)
 	require.Equal(t, service.ErrSIPDispatchRuleNotFound, err)
@@ -92,7 +92,7 @@ func TestSIPStoreDispatch(t *testing.T) {
 
 func TestSIPStoreTrunk(t *testing.T) {
 	ctx := context.Background()
-	rs := redisStore(t)
+	rs := redisStoreDocker(t)
 
 	oldID := guid.New(utils.SIPTrunkPrefix)
 	inID := guid.New(utils.SIPTrunkPrefix)
@@ -100,25 +100,25 @@ func TestSIPStoreTrunk(t *testing.T) {
 
 	// No trunks initially. Check legacy, inbound, outbound.
 	// Loading non-existent trunk should return proper not found error.
-	oldList, err := rs.ListSIPTrunk(ctx)
+	oldList, err := rs.ListSIPTrunk(ctx, &livekit.ListSIPTrunkRequest{})
 	require.NoError(t, err)
-	require.Empty(t, oldList)
+	require.Empty(t, oldList.Items)
 
 	old, err := rs.LoadSIPTrunk(ctx, oldID)
 	require.Equal(t, service.ErrSIPTrunkNotFound, err)
 	require.Nil(t, old)
 
-	inList, err := rs.ListSIPInboundTrunk(ctx)
+	inList, err := rs.ListSIPInboundTrunk(ctx, &livekit.ListSIPInboundTrunkRequest{})
 	require.NoError(t, err)
-	require.Empty(t, inList)
+	require.Empty(t, inList.Items)
 
 	in, err := rs.LoadSIPInboundTrunk(ctx, oldID)
 	require.Equal(t, service.ErrSIPTrunkNotFound, err)
 	require.Nil(t, in)
 
-	outList, err := rs.ListSIPOutboundTrunk(ctx)
+	outList, err := rs.ListSIPOutboundTrunk(ctx, &livekit.ListSIPOutboundTrunkRequest{})
 	require.NoError(t, err)
-	require.Empty(t, outList)
+	require.Empty(t, outList.Items)
 
 	out, err := rs.LoadSIPOutboundTrunk(ctx, oldID)
 	require.Equal(t, service.ErrSIPTrunkNotFound, err)
@@ -187,33 +187,33 @@ func TestSIPStoreTrunk(t *testing.T) {
 	require.True(t, proto.Equal(oldT.AsOutbound(), outT2))
 
 	// Listing (always shows legacy + new)
-	listOld, err := rs.ListSIPTrunk(ctx)
+	listOld, err := rs.ListSIPTrunk(ctx, &livekit.ListSIPTrunkRequest{})
 	require.NoError(t, err)
-	require.Len(t, listOld, 3)
-	slices.SortFunc(listOld, func(a, b *livekit.SIPTrunkInfo) int {
+	require.Len(t, listOld.Items, 3)
+	slices.SortFunc(listOld.Items, func(a, b *livekit.SIPTrunkInfo) int {
 		return strings.Compare(a.Name, b.Name)
 	})
-	require.True(t, proto.Equal(inT.AsTrunkInfo(), listOld[0]))
-	require.True(t, proto.Equal(oldT, listOld[1]))
-	require.True(t, proto.Equal(outT.AsTrunkInfo(), listOld[2]))
+	require.True(t, proto.Equal(inT.AsTrunkInfo(), listOld.Items[0]))
+	require.True(t, proto.Equal(oldT, listOld.Items[1]))
+	require.True(t, proto.Equal(outT.AsTrunkInfo(), listOld.Items[2]))
 
-	listIn, err := rs.ListSIPInboundTrunk(ctx)
+	listIn, err := rs.ListSIPInboundTrunk(ctx, &livekit.ListSIPInboundTrunkRequest{})
 	require.NoError(t, err)
-	require.Len(t, listIn, 2)
-	slices.SortFunc(listIn, func(a, b *livekit.SIPInboundTrunkInfo) int {
+	require.Len(t, listIn.Items, 2)
+	slices.SortFunc(listIn.Items, func(a, b *livekit.SIPInboundTrunkInfo) int {
 		return strings.Compare(a.Name, b.Name)
 	})
-	require.True(t, proto.Equal(inT, listIn[0]))
-	require.True(t, proto.Equal(oldT.AsInbound(), listIn[1]))
+	require.True(t, proto.Equal(inT, listIn.Items[0]))
+	require.True(t, proto.Equal(oldT.AsInbound(), listIn.Items[1]))
 
-	listOut, err := rs.ListSIPOutboundTrunk(ctx)
+	listOut, err := rs.ListSIPOutboundTrunk(ctx, &livekit.ListSIPOutboundTrunkRequest{})
 	require.NoError(t, err)
-	require.Len(t, listOut, 2)
-	slices.SortFunc(listOut, func(a, b *livekit.SIPOutboundTrunkInfo) int {
+	require.Len(t, listOut.Items, 2)
+	slices.SortFunc(listOut.Items, func(a, b *livekit.SIPOutboundTrunkInfo) int {
 		return strings.Compare(a.Name, b.Name)
 	})
-	require.True(t, proto.Equal(oldT.AsOutbound(), listOut[0]))
-	require.True(t, proto.Equal(outT, listOut[1]))
+	require.True(t, proto.Equal(oldT.AsOutbound(), listOut.Items[0]))
+	require.True(t, proto.Equal(outT, listOut.Items[1]))
 
 	// Deletion. Should not return error if not exists.
 	err = rs.DeleteSIPTrunk(ctx, oldID)
@@ -237,17 +237,17 @@ func TestSIPStoreTrunk(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check everything is deleted.
-	oldList, err = rs.ListSIPTrunk(ctx)
+	oldList, err = rs.ListSIPTrunk(ctx, &livekit.ListSIPTrunkRequest{})
 	require.NoError(t, err)
-	require.Empty(t, oldList)
+	require.Empty(t, oldList.Items)
 
-	inList, err = rs.ListSIPInboundTrunk(ctx)
+	inList, err = rs.ListSIPInboundTrunk(ctx, &livekit.ListSIPInboundTrunkRequest{})
 	require.NoError(t, err)
-	require.Empty(t, inList)
+	require.Empty(t, inList.Items)
 
-	outList, err = rs.ListSIPOutboundTrunk(ctx)
+	outList, err = rs.ListSIPOutboundTrunk(ctx, &livekit.ListSIPOutboundTrunkRequest{})
 	require.NoError(t, err)
-	require.Empty(t, outList)
+	require.Empty(t, outList.Items)
 
 	old, err = rs.LoadSIPTrunk(ctx, oldID)
 	require.Equal(t, service.ErrSIPTrunkNotFound, err)
